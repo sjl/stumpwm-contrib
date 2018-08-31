@@ -1,8 +1,11 @@
 (defpackage #:pass
   (:use #:cl)
-  (:export *password-store*))
+  (:export *password-store*
+           *pass-notification-message*))
 
 (in-package #:pass)
+
+(defparameter *pass-notification-message* nil)
 
 (defvar *password-store* (merge-pathnames #p".password-store/" (user-homedir-pathname)))
 
@@ -22,6 +25,8 @@
   (let ((entry (stumpwm:completing-read (stumpwm:current-screen)
                                         "entry: "
                                         (pass-entries))))
+    (when *pass-notification-message*
+      (stumpwm:echo (format nil "Decrypting ~A, touch security key..." entry)))
     (stumpwm:run-shell-command (format nil "pass -c ~a" entry))))
 
 (stumpwm:defcommand pass-generate () ()
