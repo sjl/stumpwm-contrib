@@ -6,7 +6,8 @@
 
 ;;; CPU formatters for the mode-line
 ;;;
-;;; Copyright 2007 Anonymous Coward, Jonathan Moore Liles.
+;;; Copyright 2007 Anonymous Coward, Jonathan Moore Liles;
+;;;           2021 Benjamin Slade. 
 ;;;
 ;;; Maintainer: Julian Stecklina
 ;;;
@@ -14,16 +15,12 @@
 (export '(*acpi-thermal-zone*))
 
 ;; Install formatters.
-(add-screen-mode-line-formatter #\c 'fmt-cpu-usage)
-(add-screen-mode-line-formatter #\C 'fmt-cpu-usage-bar)
-(add-screen-mode-line-formatter #\f 'fmt-cpu-freq)
-(add-screen-mode-line-formatter #\t 'fmt-cpu-temp)
+(add-screen-mode-line-formatter #\C 'cpu-modeline)
 
 ;; Defaults arguments for fmt-cpu-usage-bar
 (defvar *cpu-usage-bar-width* 10)
 (defvar *cpu-usage-bar-full* #\#)
 (defvar *cpu-usage-bar-empty* #\:)
-
 
 (defvar *prev-user-cpu* 0)
 (defvar *prev-sys-cpu* 0)
@@ -31,6 +28,15 @@
 (defvar *prev-iowait* 0)
 (defvar *prev-result* '(0 0 0))
 (defvar *prev-time* 0)
+
+;; Defaults for medium, high, critical temperature colouring
+(defvar *cpu-temp-med* 65)
+(defvar *cpu-temp-hi* 75)
+(defvar *cpu-temp-crit* 90)
+
+
+(defvar *cpu-usage-modeline-fmt* "CPU: ^[~A~3D%^] "
+  "The default formatting for CPU usage")
 
 ;; More or less yanked from the wiki.
 (defun current-cpu-usage ()
@@ -70,12 +76,11 @@ not available). Don't make calculation more than once a second."
                   *prev-result* (list cpu-result sys-result io-result)))))))
   (apply 'values *prev-result*))
 
-(defun fmt-cpu-usage (ml)
+(defun fmt-cpu-usage ()
   "Returns a string representing current the percent of average CPU
   utilization."
-  (declare (ignore ml))
   (let ((cpu (truncate (* 100 (current-cpu-usage)))))
-    (format nil "CPU: ^[~A~3D%^] " (bar-zone-color cpu) cpu)))
+    (format nil *cpu-usage-modeline-fmt* (bar-zone-color cpu) cpu)))
 
 (defun fmt-cpu-usage-bar (ml &optional (width *cpu-usage-bar-width*) (full *cpu-usage-bar-full*) (empty *cpu-usage-bar-empty*))
   "Returns a coloured bar-graph representing the current percent of average CPU
@@ -93,14 +98,13 @@ utilization."
             (when (string= (car split) field) (return (cadr split)))))
         "")))
 
-(defun fmt-cpu-freq (ml)
+(defun fmt-cpu-freq ()
   "Returns a string representing the current CPU frequency (especially useful for laptop users.)"
-  (declare (ignore ml))
   (let ((mhz (parse-integer (get-proc-file-field "/proc/cpuinfo" "cpu MHz")
                             :junk-allowed t)))
     (if (>= mhz 1000)
-	(format nil "~,2FGHz" (/ mhz 1000))
-	(format nil "~DMHz" mhz))))
+        (format nil "~,2FGHz" (/ mhz 1000))
+        (format nil "~DMHz" mhz))))
 
 (defvar *acpi-thermal-zone*
   (let ((proc-dir (list-directory #P"/proc/acpi/thermal_zone/"))
@@ -121,13 +125,42 @@ utilization."
              (make-pathname :directory (pathname-directory (first sys-dir))
                             :name "temp"))))))
 
-(defun fmt-cpu-temp (ml)
+(defun fmt-cpu-temp ()
   "Returns a string representing the current CPU temperature."
+  (let ((tempval (case (car *acpi-thermal-zone*)
+                   (:procfs (parse-integer
+                             (get-proc-file-field (cdr *acpi-thermal-zone*) "temperature")
+                             :junk-allowed t))
+                   (:sysfs   (with-open-file (f (cdr *acpi-thermal-zone*))
+                               (/ (read f) 1000))))))
+    (format nil "^[~A~,1F°C^]"
+            (bar-zone-color tempval *cpu-temp-med* *cpu-temp-hi* *cpu-temp-crit*)
+            tempval)))
+
+(defun cpu-modeline (ml)
   (declare (ignore ml))
-  (format nil "~,1F°C"
-          (case (car *acpi-thermal-zone*)
-            (:procfs (parse-integer
-                      (get-proc-file-field (cdr *acpi-thermal-zone*) "temperature")
-                      :junk-allowed t))
-            (:sysfs   (with-open-file (f (cdr *acpi-thermal-zone*))
-                        (/ (read f) 1000))))))
+  (format-expand *cpu-formatters-alist*
+                 *cpu-modeline-fmt*))
+
+(defvar *cpu-formatters-alist*
+  '((#\c  fmt-cpu-usage)
+    (#\C  fmt-cpu-usage-bar)
+    (#\f  fmt-cpu-freq)
+    (#\t  fmt-cpu-temp)))
+
+(defvar *cpu-modeline-fmt* "%c (%f) %t"
+  "The default value for displaying cpu information on the modeline.
+
+@table @asis
+@item %%
+A literal '%'
+@item %c
+CPU usage
+@item %C
+CPU usage graph
+@item %f
+CPU frequency
+@item %t
+CPU temperature
+@end table
+")
