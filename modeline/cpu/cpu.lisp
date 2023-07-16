@@ -104,25 +104,42 @@ utilization."
                             :junk-allowed t)))
     (if (>= mhz 1000)
         (format nil "~,2FGHz" (/ mhz 1000))
-        (format nil "~DMHz" mhz))))
+        (format nil "~4DMHz" mhz))))
+
+(defun find-procfs-thermal-zone ()
+  (first (list-directory #P"/proc/acpi/thermal_zone/")))
+
+(defun find-sysfs-thermal-zone ()
+  (let ((zones (sort (remove-if-not
+                       (lambda (x)
+                         (when (cl-ppcre:scan "^.*/thermal_zone\\d+/" (namestring x))
+                           x))
+                       (list-directory #P"/sys/class/thermal/"))
+                     #'string< :key #'namestring)))
+    (flet ((zone-type (zone)
+             (with-open-file (f (make-pathname :directory (pathname-directory zone)
+                                               :name "type")
+                                :if-does-not-exist nil)
+               (if f
+                   (read-line f)
+                   "?"))))
+      ;; Prefer the x86_pkg_temp zone if it exists, otherwise just take the first.
+      ;; https://unix.stackexchange.com/questions/304845/discrepancy-between-number-of-cores-and-thermal-zones-in-sys-class-thermal
+      (or (find "x86_pkg_temp" zones :key #'zone-type :test #'equal)
+          (first zones)))))
+
 
 (defvar *acpi-thermal-zone*
-  (let ((proc-dir (list-directory #P"/proc/acpi/thermal_zone/"))
-        (sys-dir (sort
-                  (remove-if-not
-                   (lambda (x)
-                     (when (cl-ppcre:scan "^.*/thermal_zone\\d+/" (namestring x))
-                       x))
-                   (list-directory #P"/sys/class/thermal/"))
-                  #'string< :key #'namestring)))
+  (let ((proc-dir (find-procfs-thermal-zone))
+        (sys-dir (find-sysfs-thermal-zone)))
     (cond
       (proc-dir
        (cons :procfs
-             (make-pathname :directory (pathname-directory (first proc-dir))
+             (make-pathname :directory (pathname-directory proc-dir)
                             :name "temperature")))
       (sys-dir
        (cons :sysfs
-             (make-pathname :directory (pathname-directory (first sys-dir))
+             (make-pathname :directory (pathname-directory sys-dir)
                             :name "temp"))))))
 
 (defun fmt-cpu-temp ()
