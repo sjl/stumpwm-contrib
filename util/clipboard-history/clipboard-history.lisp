@@ -23,6 +23,7 @@
 ;; (poll-selection)
 
 (defun poll-clipboard-selection ()
+  (clear-outdated-ignores)
   (poll-selection :clipboard))
 
 (defun basic-get-x-selection (&optional (selection :clipboard))
@@ -30,13 +31,30 @@
 
 ;; (basic-get-x-selection)
 
+(defvar *clipboard-ignore* nil)
 (defvar *clipboard-history* nil)
 (defparameter *clipboard-history-max-length* 32)
+(defparameter *ignore-timeout-secs* 60)
+
+(defun clear-outdated-ignores (&aux (now (get-internal-real-time)))
+  (setf *clipboard-ignore*
+        (remove-if (lambda (deadline) (>= now deadline))
+                   *clipboard-ignore*
+                   :key 'car)))
+
+(stumpwm:defcommand add-clipboard-history-ignore (string) (:string)
+  ;; ignore list is stored as conses of (deadline . val)
+  (print string)
+  (push (cons (+ (get-internal-real-time)
+                 (* *ignore-timeout-secs* internal-time-units-per-second))
+              string)
+        *clipboard-ignore*))
 
 (defun save-clipboard-history (sel)
   (when (and (stringp sel)
              (not (zerop (length sel)))
-             (not (member sel *clipboard-history* :test 'string-equal)))
+             (not (member sel *clipboard-history* :test 'string-equal))
+             (not (member sel *clipboard-ignore* :test 'string-equal :key 'cdr)))
     (push-max-stack *clipboard-history* sel *clipboard-history-max-length*)))
 
 (stumpwm:add-hook stumpwm:*selection-notify-hook* 'clipboard-history::save-clipboard-history)
